@@ -1,4 +1,4 @@
-"""Data loading utilities for Google Sheets."""
+"""Data loading utilities for Google Sheets and Excel sources."""
 
 from __future__ import annotations
 
@@ -29,14 +29,14 @@ def standardize_columns(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def parse_date_columns(df, date_cols):
-    for col in date_cols:
-        if col in df.columns:
-            try:
-                df[col] = pd.to_datetime(df[col], errors="coerce", format="mixed")
-            except TypeError:
-                df[col] = pd.to_datetime(df[col], errors="coerce")
-    return df
+def parse_date_columns(df: pd.DataFrame, possible_date_cols: list[str]) -> pd.DataFrame:
+    """Parse date columns defensively while preserving other data."""
+
+    parsed = df.copy()
+    for col in possible_date_cols:
+        if col in parsed.columns:
+            parsed[col] = pd.to_datetime(parsed[col], errors="coerce", infer_datetime_format=True)
+    return parsed
 
 
 def _normalize_tab_name(name: str) -> str:
@@ -137,13 +137,7 @@ def _postprocess_dataframe(df: pd.DataFrame) -> pd.DataFrame:
 
     for col in processed.columns:
         if col not in config.KNOWN_DATE_COLUMNS and processed[col].dtype == object:
-            stripped = (
-                processed[col]
-                .astype(str)
-                .str.replace(",", "", regex=False)
-                .str.replace("$", "", regex=False)
-                .str.strip()
-            )
+            stripped = processed[col].astype(str).str.replace(",", "", regex=False).str.replace("$", "", regex=False).str.strip()
             numeric = pd.to_numeric(stripped, errors="coerce")
             non_null_ratio = numeric.notna().mean() if len(numeric) else 0
             if non_null_ratio > 0.7:
@@ -159,7 +153,34 @@ def _postprocess_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     return processed
 
 
-def load_data(sheet_url: str) -> tuple[dict[str, pd.DataFrame], str]:
-    """Primary entrypoint for production Google Sheets loading."""
+@st.cache_data(show_spinner=False, ttl=1800)
+def load_from_excel(file_path: str) -> dict[str, pd.DataFrame]:
+    """Load required tabs from an Excel workbook."""
 
-    return load_from_google_sheets(sheet_url), "google_sheets"
+    workbook = pd.ExcelFile(file_path)
+    tab_map = _resolve_tab_names(workbook.sheet_names, config.REQUIRED_TABS)
+
+    out: dict[str, pd.DataFrame] = {}
+    for required_tab, actual_tab in tab_map.items():
+        df = pd.read_excel(file_path, sheet_name=actual_tab)
+        df = df.dropna(how="all")
+        out[required_tab] = _postprocess_dataframe(df)
+
+    return out
+
+
+def load_data(source: str, sheet_url: str, excel_file_path: str) -> tuple[dict[str, pd.DataFrame], str]:
+    """Primary entrypoint with Google Sheets default and Excel fallback."""
+
+    chosen_source = source
+    if source == "google_sheets":
+        try:
+            return load_from_google_sheets(sheet_url), "google_sheets"
+        except Exception as exc:
+            st.warning(f"Google Sheets load failed ({exc}). Falling back to Excel.")
+            chosen_source = "excel"
+
+    if chosen_source == "excel":
+        return load_from_excel(excel_file_path), "excel"
+
+    raise ValueError(f"Unsupported data source: {source}")

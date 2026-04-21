@@ -49,14 +49,21 @@ client_x509_cert_url = "..."
 
 Set `GOOGLE_SERVICE_ACCOUNT_JSON` as a JSON string containing the same service account fields.
 
-## Data source
+## Switching data source
 
-This app uses **Google Sheets as the sole production data source**.
+The app defaults to **Google Sheets**. You can switch source in the sidebar:
 
-- Default Google Sheet URL is configurable in `utils/config.py`.
-- The sidebar allows overriding the sheet URL for testing.
+- `google_sheets` (production default)
+- `excel` (fallback)
 
-Expected tabs:
+If Google Sheets loading fails, the app warns and automatically falls back to Excel.
+
+## Input sources
+
+- Google Sheet URL (default configured in app)
+- Excel workbook: `CMWF - Master Data File.xlsx`
+
+Expected tabs in either source:
 
 - `Campaign Master Feed`
 - `GA4 Master Feed`

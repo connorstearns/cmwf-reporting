@@ -13,12 +13,19 @@ st.caption("Executive-ready monthly reporting for Meta, LinkedIn, and Google.")
 
 with st.sidebar:
     st.header("Configuration")
+    source = st.selectbox(
+        "Data Source",
+        options=["google_sheets", "excel"],
+        index=0 if config.DATA_SOURCE == "google_sheets" else 1,
+        help="Google Sheets is the production default. Excel is a fallback.",
+    )
     sheet_url = st.text_input("Google Sheet URL", value=config.GOOGLE_SHEET_URL)
+    excel_path = st.text_input("Excel File Path", value=config.EXCEL_FILE_PATH)
 
 try:
-    data, source_used = load_data(sheet_url=sheet_url)
+    data, source_used = load_data(source=source, sheet_url=sheet_url, excel_file_path=excel_path)
 except Exception as exc:
-    st.error(f"Failed to load reporting data from Google Sheets: {exc}")
+    st.error(f"Failed to load reporting data: {exc}")
     st.stop()
 
 st.success(f"Loaded data from: {source_used}")
