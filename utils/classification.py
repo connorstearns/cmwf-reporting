@@ -1,27 +1,62 @@
-"""Classification helpers for platform and month handling."""
+"""Normalization and platform/topic classification helpers."""
 
 from __future__ import annotations
 
+import re
+
 import pandas as pd
 
-
-def normalize_platform_name(platform: str) -> str:
-    if not isinstance(platform, str):
-        return "Other"
-    p = platform.strip().lower()
-    if "meta" in p or "facebook" in p or "instagram" in p:
-        return "Meta"
-    if "linkedin" in p or "linked in" in p:
-        return "LinkedIn"
-    if "google" in p or "search" in p or "youtube" in p:
-        return "Google"
-    return platform.strip().title()
+from utils import config
 
 
-def add_month_key(df: pd.DataFrame, date_col: str) -> pd.DataFrame:
-    out = df.copy()
-    if date_col in out.columns:
-        out["month_key"] = pd.to_datetime(out[date_col], errors="coerce").dt.to_period("M").astype(str)
-    elif {"year", "month"}.issubset(set(out.columns)):
-        out["month_key"] = out["year"].astype(str) + "-" + pd.to_datetime(out["month"], format="%b", errors="coerce").dt.month.astype("Int64").astype(str).str.zfill(2)
-    return out
+def normalize_text(value: object) -> str:
+    text = "" if pd.isna(value) else str(value)
+    text = text.strip().lower()
+    text = re.sub(r"[\W_]+", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def normalize_platform_name(value: object) -> str:
+    text = normalize_text(value)
+    for platform, aliases in config.PLATFORM_ALIASES.items():
+        if any(alias in text for alias in aliases):
+            return platform
+    return "Unclassified"
+
+
+def classify_lp_row(row: pd.Series) -> str:
+    src = normalize_text(row.get("source"))
+    med = normalize_text(row.get("medium"))
+    camp = normalize_text(row.get("campaign"))
+    content = normalize_text(row.get("content"))
+    joined = " ".join([src, med, camp, content])
+
+    for platform, rules in config.LP_CLASSIFICATION_RULES.items():
+        if any(x in joined for x in rules["exclude_any"]):
+            continue
+        source_hit = any(x in src for x in rules["source_any"])
+        medium_hit = any(x in med for x in rules["medium_any"])
+        campaign_hint = any(x in joined for x in rules["source_any"])
+        if source_hit and (medium_hit or campaign_hint):
+            return platform
+    return "Unclassified"
+
+
+def add_classifications(campaign_df: pd.DataFrame, lp_df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    campaign = campaign_df.copy()
+    lp = lp_df.copy()
+    if "platform" in campaign.columns:
+        campaign["platform_norm"] = campaign["platform"].apply(normalize_platform_name)
+    else:
+        campaign["platform_norm"] = "Unclassified"
+
+    lp["platform_norm"] = lp.apply(classify_lp_row, axis=1)
+    return campaign, lp
+
+
+def classify_google_topic(campaign_name: object) -> str:
+    text = normalize_text(campaign_name)
+    for bucket, terms in config.TOPIC_BUCKET_RULES.items():
+        if any(term in text for term in terms):
+            return bucket
+    return "other"

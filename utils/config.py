@@ -1,26 +1,10 @@
-"""Application configuration for the CMWF paid media dashboard."""
+"""Configuration constants and editable classification rules."""
 
 from __future__ import annotations
 
-import os
-from dataclasses import dataclass
-
-
-@dataclass(frozen=True)
-class AppConfig:
-    data_source: str = "google_sheets"
-    google_sheet_url: str = (
-        "https://docs.google.com/spreadsheets/d/11-pQ2uFJkz5UgY5Tf2sPdc_K12-o0VGbb-whWGtxUpw/edit?gid=924758410#gid=924758410"
-    )
-    excel_file_path: str = "CMWF - Master Data File.xlsx"
-
-
-DATA_SOURCE = os.getenv("DATA_SOURCE", "google_sheets")
-GOOGLE_SHEET_URL = os.getenv(
-    "GOOGLE_SHEET_URL",
-    "https://docs.google.com/spreadsheets/d/11-pQ2uFJkz5UgY5Tf2sPdc_K12-o0VGbb-whWGtxUpw/edit?gid=924758410#gid=924758410",
+GOOGLE_SHEET_URL_DEFAULT = (
+    "https://docs.google.com/spreadsheets/d/11-pQ2uFJkz5UgY5Tf2sPdc_K12-o0VGbb-whWGtxUpw/edit?gid=924758410#gid=924758410"
 )
-EXCEL_FILE_PATH = os.getenv("EXCEL_FILE_PATH", "CMWF - Master Data File.xlsx")
 
 REQUIRED_TABS = [
     "Campaign Master Feed",
@@ -28,27 +12,107 @@ REQUIRED_TABS = [
     "LP Master Feed (Weekly)",
 ]
 
-CAMPAIGN_NUMERIC_COLUMNS = [
-    "cost",
-    "impressions",
-    "clicks",
-    "leads_newsletter",
-    "shares",
-    "follows_page_likes",
-]
-
-GA4_NUMERIC_COLUMNS = [
-    "paid_traffic",
-    "direct_referral_traffic",
-    "organic_traffic",
-    "scrolls",
-    "shares",
-    "newsletter_signups",
-    "file_downloads",
-]
-
-LP_NUMERIC_COLUMNS = ["sessions", "active_users", "engaged_sessions", "views"]
-
 KNOWN_DATE_COLUMNS = ["date", "week_start"]
 
-PLATFORM_DISPLAY_ORDER = ["Meta", "LinkedIn", "Google"]
+EXPECTED_COLUMNS = {
+    "Campaign Master Feed": [
+        "date",
+        "platform",
+        "campaign_name",
+        "ad_creative_id",
+        "asset_group",
+        "cost",
+        "impressions",
+        "clicks",
+        "leads_newsletter",
+        "shares",
+        "follows_page_likes",
+        "month",
+        "year",
+    ],
+    "GA4 Master Feed": [
+        "date",
+        "paid_traffic",
+        "direct_referral_traffic",
+        "organic_traffic",
+        "scrolls",
+        "shares",
+        "newsletter_signups",
+        "file_downloads",
+        "month",
+        "year",
+    ],
+    "LP Master Feed (Weekly)": [
+        "week_start",
+        "month",
+        "year",
+        "source",
+        "medium",
+        "campaign",
+        "content",
+        "term",
+        "sessions",
+        "active_users",
+        "engaged_sessions",
+        "views",
+    ],
+}
+
+NUMERIC_COLUMNS = {
+    "Campaign Master Feed": ["cost", "impressions", "clicks", "leads_newsletter", "shares", "follows_page_likes"],
+    "GA4 Master Feed": [
+        "paid_traffic",
+        "direct_referral_traffic",
+        "organic_traffic",
+        "scrolls",
+        "shares",
+        "newsletter_signups",
+        "file_downloads",
+    ],
+    "LP Master Feed (Weekly)": ["sessions", "active_users", "engaged_sessions", "views"],
+}
+
+PLATFORM_ALIASES = {
+    "Meta": ["meta", "facebook", "fb", "instagram"],
+    "LinkedIn": ["linkedin", "linked in"],
+    "Google": ["google", "google ads", "adwords", "pmax", "performance max"],
+}
+
+LP_CLASSIFICATION_RULES = {
+    "Meta": {
+        "source_any": ["facebook", "fb", "instagram", "meta"],
+        "medium_any": ["paid", "paidsocial", "social", "cpc"],
+        "exclude_any": ["organic", "referral"],
+    },
+    "LinkedIn": {
+        "source_any": ["linkedin", "linked in"],
+        "medium_any": ["paid", "social", "cpc"],
+        "exclude_any": ["organic", "referral"],
+    },
+    "Google": {
+        "source_any": ["google", "googleads", "adwords"],
+        "medium_any": ["cpc", "ppc", "paidsearch", "search", "pmax", "performance max"],
+        "exclude_any": ["organic"],
+    },
+}
+
+COMPARISON_MODES = ["Previous Month", "Trailing 3-Month Average"]
+
+LOWER_IS_BETTER = {"cpl", "cpc", "cpv", "cp_visit", "cpm", "cost_per_page_like", "cost_per_follower"}
+HIGHER_IS_BETTER = {
+    "leads",
+    "clicks",
+    "traffic",
+    "impressions",
+    "followers",
+    "likes",
+    "ctr",
+    "lead_conversion_rate",
+    "engagement_rate",
+}
+
+TOPIC_BUCKET_RULES = {
+    "brand": ["brand", "commonwealth", "cmwf"],
+    "performance max / always-on": ["pmax", "performance max", "always on", "always-on"],
+    "house / rhythm / internal": ["house", "rhythm", "internal"],
+}

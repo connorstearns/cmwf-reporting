@@ -1,35 +1,19 @@
 # CMWF Monthly Paid Media Dashboard
 
-A production-ready Streamlit app for automating the Commonwealth Fund monthly paid media report across four reporting sections:
+## Local setup instructions
+1. Create a virtual environment and install dependencies:
+   ```bash
+   python -m venv .venv
+   source .venv/bin/activate
+   pip install -r requirements.txt
+   ```
+2. Run the dashboard:
+   ```bash
+   streamlit run app.py
+   ```
 
-1. Monthly executive summary
-2. Meta campaign performance
-3. LinkedIn campaign performance
-4. Google campaign performance
-
-## Run locally
-
-```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-streamlit run app.py
-```
-
-## Google Sheets API setup
-
-1. Create a Google Cloud project.
-2. Enable Google Sheets API and Google Drive API.
-3. Create a **Service Account** and generate a JSON key.
-4. Share the target Google Sheet with the service account email (Editor or Viewer access is sufficient for reads).
-
-## Credentials in Streamlit
-
-You can provide credentials in either of two ways:
-
-### Option A: Streamlit secrets (recommended)
-
-Add this to `.streamlit/secrets.toml`:
+## Streamlit secrets setup instructions
+Create `.streamlit/secrets.toml` with:
 
 ```toml
 [gcp_service_account]
@@ -37,36 +21,55 @@ type = "service_account"
 project_id = "..."
 private_key_id = "..."
 private_key = "-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"
-client_email = "...@....iam.gserviceaccount.com"
+client_email = "..."
 client_id = "..."
 auth_uri = "https://accounts.google.com/o/oauth2/auth"
 token_uri = "https://oauth2.googleapis.com/token"
 auth_provider_x509_cert_url = "https://www.googleapis.com/oauth2/v1/certs"
 client_x509_cert_url = "..."
+
+google_sheet_url = "https://docs.google.com/spreadsheets/d/11-pQ2uFJkz5UgY5Tf2sPdc_K12-o0VGbb-whWGtxUpw/edit?gid=924758410#gid=924758410"
 ```
 
-### Option B: Environment variable
+## Google Sheets sharing instructions
+Share the source Google Sheet with the service account `client_email` in your secrets file. Viewer access is sufficient for this app.
 
-Set `GOOGLE_SERVICE_ACCOUNT_JSON` as a JSON string containing the same service account fields.
+## How the reporting month is determined
+- The app computes available month keys from the Campaign Master Feed parsed dates.
+- It defaults to the most recent **complete** month by choosing the latest month prior to the current calendar month.
+- If no prior month exists, it falls back to the latest month in the data.
 
-## Switching data source
+## Assumptions used for platform classification
+- Campaign Master Feed platform mapping normalizes variants (`meta/facebook/fb/instagram`, `linkedin/linked in`, `google/google ads/adwords/pmax`).
+- LP weekly traffic is classified with editable rules in `utils/config.py`, using `source`, `medium`, plus campaign/content context and exclusions for organic/referral signals.
+- Any row not matching paid-platform criteria is assigned to `Unclassified` and surfaced in Data QA.
 
-The app defaults to **Google Sheets**. You can switch source in the sidebar:
+---
 
-- `google_sheets` (production default)
-- `excel` (fallback)
+Production Streamlit dashboard for automating Commonwealth Fund monthly paid media reporting across:
+1. Executive Summary
+2. Meta Campaign Performance
+3. LinkedIn Campaign Performance
+4. Google Campaign Performance
+5. Data QA
 
-If Google Sheets loading fails, the app warns and automatically falls back to Excel.
+## Data source
+Google Sheets only (no Excel fallback logic).
 
-## Input sources
+Target sheet:
+`https://docs.google.com/spreadsheets/d/11-pQ2uFJkz5UgY5Tf2sPdc_K12-o0VGbb-whWGtxUpw/edit?gid=924758410#gid=924758410`
 
-- Google Sheet URL (default configured in app)
-- Excel workbook: `CMWF - Master Data File.xlsx`
+Required tabs:
+- Campaign Master Feed
+- GA4 Master Feed
+- LP Master Feed (Weekly)
 
-Expected tabs in either source:
-
-- `Campaign Master Feed`
-- `GA4 Master Feed`
-- `LP Master Feed (Weekly)`
-
-The loader includes defensive fuzzy tab-name matching with clear warnings.
+## Features
+- Service-account authentication from Streamlit secrets.
+- Defensive worksheet matching and clear failures when required tabs are missing.
+- Column normalization, date parsing, numeric coercion, blank-row removal.
+- Most-recent-complete-month default selection.
+- Comparison mode: Previous Month or Trailing 3-Month Average.
+- Executive KPI cards, platform KPI cards, trend and breakdown charts (Plotly).
+- Rule-based insights and recommendations with slide-ready text download.
+- Data QA panel for row counts, latest dates, parsing issues, missing columns, and unclassified traffic.
