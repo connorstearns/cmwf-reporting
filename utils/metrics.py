@@ -15,14 +15,26 @@ OBJECTIVES_BY_PLATFORM = {
 
 
 def safe_div(n: float, d: float) -> float | None:
-    if d is None or pd.isna(d) or float(d) == 0:
+    if d is None or pd.isna(d):
         return None
+    try:
+        if float(d) == 0:
+            return None
+    except (TypeError, ValueError):
+        return None
+
     if n is None or pd.isna(n):
         return None
-    return float(n) / float(d)
+
+    try:
+        return float(n) / float(d)
+    except (TypeError, ValueError):
+        return None
 
 
 def month_slice(df: pd.DataFrame, month_key: str) -> pd.DataFrame:
+    if df.empty or "month_key" not in df.columns:
+        return df.iloc[0:0].copy()
     return df[df["month_key"] == month_key].copy()
 
 
@@ -37,6 +49,7 @@ def aggregate_exec(campaign: pd.DataFrame, lp: pd.DataFrame) -> dict:
     clicks = campaign.get("clicks", pd.Series(dtype=float)).sum()
     leads = campaign.get("leads_newsletter", pd.Series(dtype=float)).sum()
     traffic = lp.get("sessions", pd.Series(dtype=float)).sum()
+
     return {
         "spend": spend,
         "impressions": impressions,
@@ -49,8 +62,8 @@ def aggregate_exec(campaign: pd.DataFrame, lp: pd.DataFrame) -> dict:
 
 
 def aggregate_platform(campaign: pd.DataFrame, lp: pd.DataFrame, platform: str) -> dict:
-    c = campaign[campaign["platform_norm"] == platform]
-    l = lp[lp["platform_norm"] == platform]
+    c = campaign[campaign["platform_norm"] == platform].copy()
+    l = lp[lp["platform_norm"] == platform].copy()
 
     spend = c.get("cost", pd.Series(dtype=float)).sum()
     impressions = c.get("impressions", pd.Series(dtype=float)).sum()
@@ -74,6 +87,7 @@ def aggregate_platform(campaign: pd.DataFrame, lp: pd.DataFrame, platform: str) 
         "cp_visit": safe_div(spend, visits),
         "lead_conversion_rate": safe_div(leads, visits),
     }
+
     if platform == "Meta":
         base.update(
             {
@@ -82,7 +96,7 @@ def aggregate_platform(campaign: pd.DataFrame, lp: pd.DataFrame, platform: str) 
                 "cost_per_outbound_click": safe_div(spend, clicks),
             }
         )
-    if platform == "LinkedIn":
+    elif platform == "LinkedIn":
         base.update(
             {
                 "followers_gained": follows,
@@ -90,17 +104,30 @@ def aggregate_platform(campaign: pd.DataFrame, lp: pd.DataFrame, platform: str) 
                 "engagement_rate": safe_div(shares, impressions),
             }
         )
-    if platform == "Google":
+    elif platform == "Google":
         base.update({"cpm": safe_div(spend * 1000, impressions)})
+
     return base
 
 
 def _campaign_objective_rollup(campaign: pd.DataFrame, platform: str) -> pd.DataFrame:
     c = campaign[campaign["platform_norm"] == platform].copy()
+
     if c.empty:
         return pd.DataFrame(
-            columns=["objective", "campaign_name", "campaign_key", "spend", "impressions", "clicks", "leads", "follows", "shares"]
+            columns=[
+                "objective",
+                "campaign_name",
+                "campaign_key",
+                "spend",
+                "impressions",
+                "clicks",
+                "leads",
+                "follows",
+                "shares",
+            ]
         )
+
     grouped = (
         c.groupby(["objective", "campaign_name", "campaign_key"], as_index=False)
         .agg(
@@ -117,22 +144,34 @@ def _campaign_objective_rollup(campaign: pd.DataFrame, platform: str) -> pd.Data
 
 def _lp_campaign_rollup(lp: pd.DataFrame, platform: str) -> pd.DataFrame:
     l = lp[lp["platform_norm"] == platform].copy()
+
     if l.empty:
         return pd.DataFrame(columns=["campaign_key", "website_visits"])
-    return l.groupby("campaign_key", as_index=False).agg(website_visits=("sessions", "sum"))
+
+    return l.groupby("campaign_key", as_index=False).agg(
+        website_visits=("sessions", "sum")
+    )
 
 
-def objective_breakdown(campaign: pd.DataFrame, lp: pd.DataFrame, platform: str) -> tuple[pd.DataFrame, pd.DataFrame]:
+def objective_breakdown(
+    campaign: pd.DataFrame,
+    lp: pd.DataFrame,
+    platform: str,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
     Build objective-level summary and campaign-detail tables.
-    LP attribution assumption: join LP sessions to campaign feed by platform_norm + normalized campaign_key.
+
+    LP attribution assumption:
+    join LP sessions to campaign feed by platform_norm + normalized campaign_key.
     """
     campaign_rollup = _campaign_objective_rollup(campaign, platform)
     lp_rollup = _lp_campaign_rollup(lp, platform)
+
     joined = campaign_rollup.merge(lp_rollup, on="campaign_key", how="left")
     joined["website_visits"] = joined["website_visits"].fillna(0.0)
 
     detail = joined.copy()
+
     summary = (
         joined.groupby("objective", as_index=False)
         .agg(
@@ -146,12 +185,17 @@ def objective_breakdown(campaign: pd.DataFrame, lp: pd.DataFrame, platform: str)
         )
         .sort_values("spend", ascending=False)
     )
+
     summary["ctr"] = summary.apply(lambda row: safe_div(row["clicks"], row["impressions"]), axis=1)
     summary["cpc"] = summary.apply(lambda row: safe_div(row["spend"], row["clicks"]), axis=1)
     summary["cp_visit"] = summary.apply(lambda row: safe_div(row["spend"], row["website_visits"]), axis=1)
     summary["cpl"] = summary.apply(lambda row: safe_div(row["spend"], row["leads"]), axis=1)
-    summary["lead_conversion_rate"] = summary.apply(lambda row: safe_div(row["leads"], row["website_visits"]), axis=1)
-    summary["cost_per_follow"] = summary.apply(lambda row: safe_div(row["spend"], row["follows"]), axis=1)
+    summary["lead_conversion_rate"] = summary.apply(
+        lambda row: safe_div(row["leads"], row["website_visits"]), axis=1
+    )
+    summary["cost_per_follow"] = summary.apply(
+        lambda row: safe_div(row["spend"], row["follows"]), axis=1
+    )
 
     expected = OBJECTIVES_BY_PLATFORM.get(platform, [])
     if expected:
@@ -167,6 +211,7 @@ def objective_breakdown(campaign: pd.DataFrame, lp: pd.DataFrame, platform: str)
                 "website_visits": 0.0,
             }
         )
+
     return summary, detail
 
 
@@ -177,16 +222,26 @@ def objective_comparison(
     comparison_mode: str,
     platform: str,
 ) -> pd.DataFrame:
-    selected_summary, _ = objective_breakdown(month_slice(campaign_all, selected_month), month_slice(lp_all, selected_month), platform)
+    selected_summary, _ = objective_breakdown(
+        month_slice(campaign_all, selected_month),
+        month_slice(lp_all, selected_month),
+        platform,
+    )
+
     if comparison_mode == "Previous Month":
         comp_months = [str(pd.Period(selected_month, "M") - 1)]
     else:
         comp_months = trailing_months(selected_month, 3)
 
     all_comp = []
-    for m in comp_months:
-        comp, _ = objective_breakdown(month_slice(campaign_all, m), month_slice(lp_all, m), platform)
-        all_comp.append(comp.assign(month_key=m))
+    for month in comp_months:
+        comp_summary, _ = objective_breakdown(
+            month_slice(campaign_all, month),
+            month_slice(lp_all, month),
+            platform,
+        )
+        all_comp.append(comp_summary.assign(month_key=month))
+
     if all_comp:
         comp_df = pd.concat(all_comp, ignore_index=True)
         baseline = comp_df.groupby("objective", as_index=False).mean(numeric_only=True)
@@ -199,12 +254,24 @@ def objective_comparison(
         right_on="baseline_objective",
         how="left",
     ).drop(columns=["baseline_objective"], errors="ignore")
-    merged["spend_delta"] = merged.apply(lambda r: delta_text(r.get("spend"), r.get("baseline_spend")), axis=1)
-    merged["website_visits_delta"] = merged.apply(
-        lambda r: delta_text(r.get("website_visits"), r.get("baseline_website_visits")), axis=1
+
+    merged["spend_delta"] = merged.apply(
+        lambda row: delta_text(row.get("spend"), row.get("baseline_spend")),
+        axis=1,
     )
-    merged["cpl_delta"] = merged.apply(lambda r: delta_text(r.get("cpl"), r.get("baseline_cpl")), axis=1)
-    merged["cp_visit_delta"] = merged.apply(lambda r: delta_text(r.get("cp_visit"), r.get("baseline_cp_visit")), axis=1)
+    merged["website_visits_delta"] = merged.apply(
+        lambda row: delta_text(row.get("website_visits"), row.get("baseline_website_visits")),
+        axis=1,
+    )
+    merged["cpl_delta"] = merged.apply(
+        lambda row: delta_text(row.get("cpl"), row.get("baseline_cpl")),
+        axis=1,
+    )
+    merged["cp_visit_delta"] = merged.apply(
+        lambda row: delta_text(row.get("cp_visit"), row.get("baseline_cp_visit")),
+        axis=1,
+    )
+
     return merged
 
 
@@ -218,25 +285,44 @@ def comparison_value(
     platform: str | None = None,
 ) -> tuple[float | None, float | None]:
     selected_value = selected.get(metric_name)
+
     if comparison_mode == "Previous Month":
         comp_month = str(pd.Period(selected_month, "M") - 1)
         if platform:
-            baseline = aggregate_platform(month_slice(campaign_all, comp_month), month_slice(lp_all, comp_month), platform)
+            baseline = aggregate_platform(
+                month_slice(campaign_all, comp_month),
+                month_slice(lp_all, comp_month),
+                platform,
+            )
         else:
-            baseline = aggregate_exec(month_slice(campaign_all, comp_month), month_slice(lp_all, comp_month))
+            baseline = aggregate_exec(
+                month_slice(campaign_all, comp_month),
+                month_slice(lp_all, comp_month),
+            )
         baseline_value = baseline.get(metric_name)
     else:
         months = trailing_months(selected_month, 3)
         values = []
-        for m in months:
+
+        for month in months:
             if platform:
-                cur = aggregate_platform(month_slice(campaign_all, m), month_slice(lp_all, m), platform)
+                current = aggregate_platform(
+                    month_slice(campaign_all, month),
+                    month_slice(lp_all, month),
+                    platform,
+                )
             else:
-                cur = aggregate_exec(month_slice(campaign_all, m), month_slice(lp_all, m))
-            val = cur.get(metric_name)
-            if val is not None and not (isinstance(val, float) and math.isnan(val)):
-                values.append(val)
+                current = aggregate_exec(
+                    month_slice(campaign_all, month),
+                    month_slice(lp_all, month),
+                )
+
+            value = current.get(metric_name)
+            if value is not None and not (isinstance(value, float) and math.isnan(value)):
+                values.append(value)
+
         baseline_value = float(np.mean(values)) if values else None
+
     return selected_value, baseline_value
 
 
@@ -245,4 +331,4 @@ def delta_text(current: float | None, baseline: float | None) -> str:
         return "n/a"
     if baseline == 0:
         return "n/a"
-    return f"{((current-baseline)/baseline):+.1%}"
+    return f"{((current - baseline) / baseline):+.1%}"
