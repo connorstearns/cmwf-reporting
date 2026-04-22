@@ -31,3 +31,9 @@ def topic_breakdown(df: pd.DataFrame):
         return px.bar(title="Topic Breakdown (No data)")
     grouped = df.groupby("topic_bucket", as_index=False)["cost"].sum().sort_values("cost", ascending=False)
     return px.bar(grouped, x="topic_bucket", y="cost", title="Google Topic Spend Breakdown")
+
+
+def objective_breakdown_chart(df: pd.DataFrame, value_col: str, title: str):
+    if df.empty or "objective" not in df.columns or value_col not in df.columns:
+        return px.bar(title=f"{title} (No data)")
+    return px.bar(df, x="objective", y=value_col, title=title)

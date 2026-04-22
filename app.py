@@ -112,6 +112,8 @@ def render_platform_tab(platform: str, tab_idx: int) -> None:
                 ("Cost per Follower", "cost_per_follower"),
                 ("Cost per Click", "cpc"),
                 ("Engagement Rate", "engagement_rate"),
+                ("Website Visits", "website_visits"),
+                ("Cost per Website Visit", "cp_visit"),
                 ("Cost per Lead", "cpl"),
                 ("Lead Conversion Rate", "lead_conversion_rate"),
             ]
@@ -139,6 +141,41 @@ def render_platform_tab(platform: str, tab_idx: int) -> None:
 
         p_campaign = selected_campaign[selected_campaign["platform_norm"] == platform].copy()
         p_lp = selected_lp[selected_lp["platform_norm"] == platform].copy()
+
+        st.markdown("### Objective Breakdown")
+        objective_compare = metrics.objective_comparison(campaign, lp, selected_month, comparison_mode, platform)
+        objective_display_cols = [
+            "objective",
+            "spend",
+            "baseline_spend",
+            "spend_delta",
+            "clicks",
+            "impressions",
+            "ctr",
+            "cpc",
+            "website_visits",
+            "baseline_website_visits",
+            "website_visits_delta",
+            "cp_visit",
+            "leads",
+            "cpl",
+            "lead_conversion_rate",
+            "follows",
+            "cost_per_follow",
+            "shares",
+        ]
+        show_cols = [c for c in objective_display_cols if c in objective_compare.columns]
+        st.dataframe(objective_compare[show_cols], use_container_width=True)
+        st.plotly_chart(
+            charts.objective_breakdown_chart(objective_compare, "spend", f"{platform} Spend by Objective"),
+            use_container_width=True,
+        )
+        if "website_visits" in objective_compare.columns:
+            st.plotly_chart(
+                charts.objective_breakdown_chart(objective_compare, "website_visits", f"{platform} Website Visitors by Objective"),
+                use_container_width=True,
+            )
+
         st.plotly_chart(charts.monthly_trend(campaign[campaign["platform_norm"] == platform], "cost", f"{platform} Spend Trend"), use_container_width=True)
 
         if platform == "Meta":
@@ -148,13 +185,43 @@ def render_platform_tab(platform: str, tab_idx: int) -> None:
             st.plotly_chart(charts.topic_breakdown(p_campaign), use_container_width=True)
 
         st.plotly_chart(charts.campaign_breakdown(p_campaign, "cost", f"{platform} Campaign Spend Breakdown"), use_container_width=True)
-        st.dataframe(p_campaign.sort_values("cost", ascending=False), use_container_width=True)
+        _, objective_detail = metrics.objective_breakdown(selected_campaign, selected_lp, platform)
+        if not objective_detail.empty:
+            detail = objective_detail.copy()
+            detail["ctr"] = detail.apply(lambda r: metrics.safe_div(r["clicks"], r["impressions"]), axis=1)
+            detail["cpc"] = detail.apply(lambda r: metrics.safe_div(r["spend"], r["clicks"]), axis=1)
+            detail["cp_visit"] = detail.apply(lambda r: metrics.safe_div(r["spend"], r["website_visits"]), axis=1)
+            detail["cpl"] = detail.apply(lambda r: metrics.safe_div(r["spend"], r["leads"]), axis=1)
+            st.dataframe(
+                detail[
+                    [
+                        "objective",
+                        "campaign_name",
+                        "spend",
+                        "clicks",
+                        "impressions",
+                        "website_visits",
+                        "leads",
+                        "follows",
+                        "shares",
+                        "ctr",
+                        "cpc",
+                        "cp_visit",
+                        "cpl",
+                    ]
+                ].sort_values("spend", ascending=False),
+                use_container_width=True,
+            )
+        else:
+            st.dataframe(p_campaign.sort_values("cost", ascending=False), use_container_width=True)
 
         p_bullets = insights.platform_insights(platform, p_now, p_base)
-        p_recs = insights.recommendations(platform)
+        obj_bullets = insights.objective_insights(platform, objective_compare)
+        p_recs = insights.recommendations(platform) + insights.objective_recommendations(platform, objective_compare)
         ui.render_bullets("Key insights", p_bullets)
+        ui.render_bullets("Objective insights", obj_bullets)
         ui.render_bullets("Recommendations", p_recs)
-        ptxt = insights.slide_text(f"{platform} Campaign Performance", selected_month, p_bullets, p_recs)
+        ptxt = insights.slide_text(f"{platform} Campaign Performance", selected_month, p_bullets + obj_bullets, p_recs)
         st.download_button(f"Download {platform} slide-ready text", ptxt, file_name=f"{platform.lower()}_{selected_month}.txt")
 
 
@@ -176,7 +243,23 @@ with platform_tabs[4]:
     st.markdown("**Unclassified LP rows (sample)**")
     st.dataframe(unclassified.head(50), use_container_width=True)
 
+    objective_qa = qa.objective_qa(selected_campaign, selected_lp)
+    st.markdown("**Campaigns Missing Objective Classification**")
+    st.dataframe(objective_qa["missing_objective_campaigns"], use_container_width=True)
+    st.markdown("**Objective Counts by Platform**")
+    st.dataframe(objective_qa["objective_counts_by_platform"], use_container_width=True)
+    st.markdown("**Platform/Objective Combinations with No Activity**")
+    st.dataframe(objective_qa["platform_objective_no_activity"], use_container_width=True)
+    st.markdown("**LP rows not matched to campaign objective keys (sample)**")
+    st.dataframe(objective_qa["lp_unmatched_for_objective"].head(100), use_container_width=True)
+
     warnings = qa.denominator_warnings(exec_now)
+    for platform in ["Meta", "LinkedIn", "Google"]:
+        objective_compare = metrics.objective_comparison(campaign, lp, selected_month, comparison_mode, platform)
+        for _, row in objective_compare.iterrows():
+            for metric_key in ["ctr", "cpc", "cp_visit", "cpl", "lead_conversion_rate", "cost_per_follow"]:
+                if metric_key in objective_compare.columns and row.get(metric_key) is None:
+                    warnings.append(f"{platform}/{row.get('objective')}: {metric_key} has null value due to zero/missing denominator.")
     if warnings:
         st.markdown("**Null/Zero-denominator warnings**")
         for w in warnings:
