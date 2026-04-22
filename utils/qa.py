@@ -58,3 +58,36 @@ def build_qa_summary(data: dict[str, pd.DataFrame], selected_month: str, unclass
         else:
             summary["date_parsing_issues"][tab] = len(df)
     return summary
+
+
+def objective_qa(campaign: pd.DataFrame, lp: pd.DataFrame) -> dict:
+    out: dict = {}
+    missing_objective = campaign[campaign["objective"].isna() | (campaign["objective"] == "Unclassified")]
+    out["missing_objective_campaigns"] = missing_objective[
+        ["platform_norm", "campaign_name", "objective"]
+    ].drop_duplicates()
+    out["objective_counts_by_platform"] = (
+        campaign.groupby(["platform_norm", "objective"], as_index=False).size().rename(columns={"size": "campaign_count"})
+    )
+
+    expected = {
+        "Meta": ["Follows", "Leads", "Traffic"],
+        "LinkedIn": ["Follows", "Leads", "Traffic", "Article"],
+        "Google": ["Traffic"],
+    }
+    combos = []
+    for platform, objectives in expected.items():
+        for obj in objectives:
+            combos.append({"platform_norm": platform, "objective": obj})
+    expected_df = pd.DataFrame(combos)
+    activity = campaign.groupby(["platform_norm", "objective"], as_index=False).agg(cost=("cost", "sum"))
+    out["platform_objective_no_activity"] = expected_df.merge(activity, on=["platform_norm", "objective"], how="left")
+    out["platform_objective_no_activity"] = out["platform_objective_no_activity"][
+        out["platform_objective_no_activity"]["cost"].fillna(0) <= 0
+    ]
+
+    mapped_keys = campaign[["platform_norm", "campaign_key"]].drop_duplicates()
+    lp_keys = lp[["platform_norm", "campaign_key", "sessions"]].copy()
+    unmatched = lp_keys.merge(mapped_keys, on=["platform_norm", "campaign_key"], how="left", indicator=True)
+    out["lp_unmatched_for_objective"] = unmatched[unmatched["_merge"] == "left_only"].drop(columns=["_merge"])
+    return out

@@ -7,6 +7,12 @@ import math
 import numpy as np
 import pandas as pd
 
+OBJECTIVES_BY_PLATFORM = {
+    "Meta": ["Follows", "Leads", "Traffic"],
+    "LinkedIn": ["Follows", "Leads", "Traffic", "Article"],
+    "Google": ["Traffic"],
+}
+
 
 def safe_div(n: float, d: float) -> float | None:
     if d is None or pd.isna(d) or float(d) == 0:
@@ -87,6 +93,119 @@ def aggregate_platform(campaign: pd.DataFrame, lp: pd.DataFrame, platform: str) 
     if platform == "Google":
         base.update({"cpm": safe_div(spend * 1000, impressions)})
     return base
+
+
+def _campaign_objective_rollup(campaign: pd.DataFrame, platform: str) -> pd.DataFrame:
+    c = campaign[campaign["platform_norm"] == platform].copy()
+    if c.empty:
+        return pd.DataFrame(
+            columns=["objective", "campaign_name", "campaign_key", "spend", "impressions", "clicks", "leads", "follows", "shares"]
+        )
+    grouped = (
+        c.groupby(["objective", "campaign_name", "campaign_key"], as_index=False)
+        .agg(
+            spend=("cost", "sum"),
+            impressions=("impressions", "sum"),
+            clicks=("clicks", "sum"),
+            leads=("leads_newsletter", "sum"),
+            follows=("follows_page_likes", "sum"),
+            shares=("shares", "sum"),
+        )
+    )
+    return grouped
+
+
+def _lp_campaign_rollup(lp: pd.DataFrame, platform: str) -> pd.DataFrame:
+    l = lp[lp["platform_norm"] == platform].copy()
+    if l.empty:
+        return pd.DataFrame(columns=["campaign_key", "website_visits"])
+    return l.groupby("campaign_key", as_index=False).agg(website_visits=("sessions", "sum"))
+
+
+def objective_breakdown(campaign: pd.DataFrame, lp: pd.DataFrame, platform: str) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Build objective-level summary and campaign-detail tables.
+    LP attribution assumption: join LP sessions to campaign feed by platform_norm + normalized campaign_key.
+    """
+    campaign_rollup = _campaign_objective_rollup(campaign, platform)
+    lp_rollup = _lp_campaign_rollup(lp, platform)
+    joined = campaign_rollup.merge(lp_rollup, on="campaign_key", how="left")
+    joined["website_visits"] = joined["website_visits"].fillna(0.0)
+
+    detail = joined.copy()
+    summary = (
+        joined.groupby("objective", as_index=False)
+        .agg(
+            spend=("spend", "sum"),
+            impressions=("impressions", "sum"),
+            clicks=("clicks", "sum"),
+            leads=("leads", "sum"),
+            follows=("follows", "sum"),
+            shares=("shares", "sum"),
+            website_visits=("website_visits", "sum"),
+        )
+        .sort_values("spend", ascending=False)
+    )
+    summary["ctr"] = summary.apply(lambda row: safe_div(row["clicks"], row["impressions"]), axis=1)
+    summary["cpc"] = summary.apply(lambda row: safe_div(row["spend"], row["clicks"]), axis=1)
+    summary["cp_visit"] = summary.apply(lambda row: safe_div(row["spend"], row["website_visits"]), axis=1)
+    summary["cpl"] = summary.apply(lambda row: safe_div(row["spend"], row["leads"]), axis=1)
+    summary["lead_conversion_rate"] = summary.apply(lambda row: safe_div(row["leads"], row["website_visits"]), axis=1)
+    summary["cost_per_follow"] = summary.apply(lambda row: safe_div(row["spend"], row["follows"]), axis=1)
+
+    expected = OBJECTIVES_BY_PLATFORM.get(platform, [])
+    if expected:
+        idx = pd.DataFrame({"objective": expected})
+        summary = idx.merge(summary, on="objective", how="left").fillna(
+            {
+                "spend": 0.0,
+                "impressions": 0.0,
+                "clicks": 0.0,
+                "leads": 0.0,
+                "follows": 0.0,
+                "shares": 0.0,
+                "website_visits": 0.0,
+            }
+        )
+    return summary, detail
+
+
+def objective_comparison(
+    campaign_all: pd.DataFrame,
+    lp_all: pd.DataFrame,
+    selected_month: str,
+    comparison_mode: str,
+    platform: str,
+) -> pd.DataFrame:
+    selected_summary, _ = objective_breakdown(month_slice(campaign_all, selected_month), month_slice(lp_all, selected_month), platform)
+    if comparison_mode == "Previous Month":
+        comp_months = [str(pd.Period(selected_month, "M") - 1)]
+    else:
+        comp_months = trailing_months(selected_month, 3)
+
+    all_comp = []
+    for m in comp_months:
+        comp, _ = objective_breakdown(month_slice(campaign_all, m), month_slice(lp_all, m), platform)
+        all_comp.append(comp.assign(month_key=m))
+    if all_comp:
+        comp_df = pd.concat(all_comp, ignore_index=True)
+        baseline = comp_df.groupby("objective", as_index=False).mean(numeric_only=True)
+    else:
+        baseline = pd.DataFrame(columns=selected_summary.columns)
+
+    merged = selected_summary.merge(
+        baseline.add_prefix("baseline_"),
+        left_on="objective",
+        right_on="baseline_objective",
+        how="left",
+    ).drop(columns=["baseline_objective"], errors="ignore")
+    merged["spend_delta"] = merged.apply(lambda r: delta_text(r.get("spend"), r.get("baseline_spend")), axis=1)
+    merged["website_visits_delta"] = merged.apply(
+        lambda r: delta_text(r.get("website_visits"), r.get("baseline_website_visits")), axis=1
+    )
+    merged["cpl_delta"] = merged.apply(lambda r: delta_text(r.get("cpl"), r.get("baseline_cpl")), axis=1)
+    merged["cp_visit_delta"] = merged.apply(lambda r: delta_text(r.get("cp_visit"), r.get("baseline_cp_visit")), axis=1)
+    return merged
 
 
 def comparison_value(

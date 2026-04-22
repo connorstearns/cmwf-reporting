@@ -24,6 +24,44 @@ def normalize_platform_name(value: object) -> str:
     return "Unclassified"
 
 
+def normalize_campaign_key(value: object) -> str:
+    """Normalize campaign identifiers for cross-feed matching."""
+    return normalize_text(value)
+
+
+def classify_campaign_objective(platform: object, campaign_name: object) -> str:
+    """Classify campaign objective based on platform + campaign naming conventions."""
+    p = normalize_platform_name(platform)
+    c = normalize_text(campaign_name)
+    c_pad = f" {c} "
+
+    if p == "Google":
+        return "Traffic"
+
+    if p == "Meta":
+        lead_signals = ["leadgen", "lead gen", "newsletter leads", "mirror mirror leads", " leads "]
+        follow_signals = ["follower", "page growth", "profile visits", "audience growth"]
+        if any(sig in c_pad for sig in lead_signals):
+            return "Leads"
+        if any(sig in c for sig in follow_signals):
+            return "Follows"
+        return "Traffic"
+
+    if p == "LinkedIn":
+        article_signals = ["article boost", "engagement website", "pageengager"]
+        lead_signals = ["leadgen", "lead gen", "mirror mirror leads", " leads "]
+        follow_signals = ["follower ads", "follower"]
+        if any(sig in c for sig in article_signals):
+            return "Article"
+        if any(sig in c_pad for sig in lead_signals):
+            return "Leads"
+        if any(sig in c for sig in follow_signals):
+            return "Follows"
+        return "Traffic"
+
+    return "Unclassified"
+
+
 def classify_lp_row(row: pd.Series) -> str:
     src = normalize_text(row.get("source"))
     med = normalize_text(row.get("medium"))
@@ -49,8 +87,20 @@ def add_classifications(campaign_df: pd.DataFrame, lp_df: pd.DataFrame) -> tuple
         campaign["platform_norm"] = campaign["platform"].apply(normalize_platform_name)
     else:
         campaign["platform_norm"] = "Unclassified"
+    if "campaign_name" in campaign.columns:
+        campaign["campaign_key"] = campaign["campaign_name"].apply(normalize_campaign_key)
+    else:
+        campaign["campaign_key"] = ""
+    campaign["objective"] = campaign.apply(
+        lambda row: classify_campaign_objective(row.get("platform_norm", row.get("platform")), row.get("campaign_name")),
+        axis=1,
+    )
 
     lp["platform_norm"] = lp.apply(classify_lp_row, axis=1)
+    if "campaign" in lp.columns:
+        lp["campaign_key"] = lp["campaign"].apply(normalize_campaign_key)
+    else:
+        lp["campaign_key"] = ""
     return campaign, lp
 
 
