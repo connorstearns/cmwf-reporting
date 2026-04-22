@@ -1,4 +1,4 @@
-"""Chart helpers for the paid media dashboard."""
+"""Plotly chart helpers for executive-style visuals."""
 
 from __future__ import annotations
 
@@ -6,36 +6,28 @@ import pandas as pd
 import plotly.express as px
 
 
-def spend_by_platform_chart(df_platform: pd.DataFrame):
-    chart_df = df_platform.copy()
-    if chart_df.empty:
-        return px.bar(title="No platform data available")
-    return px.bar(
-        chart_df,
-        x="platform_norm",
-        y="spend",
-        text_auto=".2s",
-        title="Monthly Spend by Platform",
-        labels={"platform_norm": "Platform", "spend": "Spend ($)"},
-    )
+def spend_mix(df: pd.DataFrame):
+    if df.empty:
+        return px.pie(title="No spend data")
+    return px.pie(df, names="platform_norm", values="cost", hole=0.45, title="Spend Mix by Platform")
 
 
-def campaign_scatter(df_campaign: pd.DataFrame, platform_name: str):
-    subset = df_campaign[df_campaign["platform_norm"] == platform_name].copy()
-    if subset.empty:
-        return px.scatter(title=f"No campaign data available for {platform_name}")
+def monthly_trend(df: pd.DataFrame, y: str, title: str):
+    if df.empty:
+        return px.line(title=f"{title} (No data)")
+    t = df.groupby("month_key", as_index=False)[y].sum().sort_values("month_key")
+    return px.line(t, x="month_key", y=y, markers=True, title=title)
 
-    grouped = (
-        subset.groupby("campaign_name", dropna=False)
-        .agg(spend=("cost", "sum"), clicks=("clicks", "sum"), impressions=("impressions", "sum"), leads=("leads_newsletter", "sum"))
-        .reset_index()
-    )
-    return px.scatter(
-        grouped,
-        x="spend",
-        y="clicks",
-        size="impressions",
-        color="leads",
-        hover_name="campaign_name",
-        title=f"{platform_name}: Campaign Spend vs Clicks",
-    )
+
+def campaign_breakdown(df: pd.DataFrame, value_col: str, title: str, name_col: str = "campaign_name"):
+    if df.empty or name_col not in df.columns:
+        return px.bar(title=f"{title} (No data)")
+    top = df.groupby(name_col, as_index=False)[value_col].sum().sort_values(value_col, ascending=False).head(10)
+    return px.bar(top, x=name_col, y=value_col, title=title)
+
+
+def topic_breakdown(df: pd.DataFrame):
+    if df.empty:
+        return px.bar(title="Topic Breakdown (No data)")
+    grouped = df.groupby("topic_bucket", as_index=False)["cost"].sum().sort_values("cost", ascending=False)
+    return px.bar(grouped, x="topic_bucket", y="cost", title="Google Topic Spend Breakdown")

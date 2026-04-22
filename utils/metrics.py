@@ -1,58 +1,129 @@
-"""Metric calculations for executive and platform reporting."""
+"""KPI calculations and comparison utilities."""
 
 from __future__ import annotations
+
+import math
 
 import numpy as np
 import pandas as pd
 
 
-def safe_divide(a: float, b: float) -> float:
-    if b in (0, None) or (isinstance(b, float) and np.isnan(b)):
-        return 0.0
-    return float(a) / float(b)
+def safe_div(n: float, d: float) -> float | None:
+    if d is None or pd.isna(d) or float(d) == 0:
+        return None
+    if n is None or pd.isna(n):
+        return None
+    return float(n) / float(d)
 
 
-def summarize_campaign_month(df_campaign: pd.DataFrame) -> dict:
-    totals = {
-        "spend": float(df_campaign.get("cost", pd.Series(dtype=float)).sum()),
-        "impressions": float(df_campaign.get("impressions", pd.Series(dtype=float)).sum()),
-        "clicks": float(df_campaign.get("clicks", pd.Series(dtype=float)).sum()),
-        "leads": float(df_campaign.get("leads_newsletter", pd.Series(dtype=float)).sum()),
-        "shares": float(df_campaign.get("shares", pd.Series(dtype=float)).sum()),
-        "follows": float(df_campaign.get("follows_page_likes", pd.Series(dtype=float)).sum()),
-    }
-    totals["ctr"] = safe_divide(totals["clicks"], totals["impressions"])
-    totals["cpc"] = safe_divide(totals["spend"], totals["clicks"])
-    totals["cpl"] = safe_divide(totals["spend"], totals["leads"])
-    return totals
+def month_slice(df: pd.DataFrame, month_key: str) -> pd.DataFrame:
+    return df[df["month_key"] == month_key].copy()
 
 
-def summarize_platform(df_campaign_month: pd.DataFrame) -> pd.DataFrame:
-    grouped = (
-        df_campaign_month.groupby("platform_norm", dropna=False)
-        .agg(
-            spend=("cost", "sum"),
-            impressions=("impressions", "sum"),
-            clicks=("clicks", "sum"),
-            leads=("leads_newsletter", "sum"),
-            shares=("shares", "sum"),
-            follows=("follows_page_likes", "sum"),
-        )
-        .reset_index()
-    )
-    grouped["ctr"] = grouped.apply(lambda r: safe_divide(r["clicks"], r["impressions"]), axis=1)
-    grouped["cpc"] = grouped.apply(lambda r: safe_divide(r["spend"], r["clicks"]), axis=1)
-    grouped["cpl"] = grouped.apply(lambda r: safe_divide(r["spend"], r["leads"]), axis=1)
-    return grouped.sort_values("spend", ascending=False)
+def trailing_months(month_key: str, n: int = 3) -> list[str]:
+    period = pd.Period(month_key, freq="M")
+    return [str(period - i) for i in range(1, n + 1)]
 
 
-def summarize_ga4_month(df_ga4_month: pd.DataFrame) -> dict:
+def aggregate_exec(campaign: pd.DataFrame, lp: pd.DataFrame) -> dict:
+    spend = campaign.get("cost", pd.Series(dtype=float)).sum()
+    impressions = campaign.get("impressions", pd.Series(dtype=float)).sum()
+    clicks = campaign.get("clicks", pd.Series(dtype=float)).sum()
+    leads = campaign.get("leads_newsletter", pd.Series(dtype=float)).sum()
+    traffic = lp.get("sessions", pd.Series(dtype=float)).sum()
     return {
-        "paid_traffic": float(df_ga4_month.get("paid_traffic", pd.Series(dtype=float)).sum()),
-        "direct_referral_traffic": float(df_ga4_month.get("direct_referral_traffic", pd.Series(dtype=float)).sum()),
-        "organic_traffic": float(df_ga4_month.get("organic_traffic", pd.Series(dtype=float)).sum()),
-        "scrolls": float(df_ga4_month.get("scrolls", pd.Series(dtype=float)).sum()),
-        "shares": float(df_ga4_month.get("shares", pd.Series(dtype=float)).sum()),
-        "newsletter_signups": float(df_ga4_month.get("newsletter_signups", pd.Series(dtype=float)).sum()),
-        "file_downloads": float(df_ga4_month.get("file_downloads", pd.Series(dtype=float)).sum()),
+        "spend": spend,
+        "impressions": impressions,
+        "clicks": clicks,
+        "ctr": safe_div(clicks, impressions),
+        "cpc": safe_div(spend, clicks),
+        "leads": leads,
+        "traffic": traffic,
     }
+
+
+def aggregate_platform(campaign: pd.DataFrame, lp: pd.DataFrame, platform: str) -> dict:
+    c = campaign[campaign["platform_norm"] == platform]
+    l = lp[lp["platform_norm"] == platform]
+
+    spend = c.get("cost", pd.Series(dtype=float)).sum()
+    impressions = c.get("impressions", pd.Series(dtype=float)).sum()
+    clicks = c.get("clicks", pd.Series(dtype=float)).sum()
+    leads = c.get("leads_newsletter", pd.Series(dtype=float)).sum()
+    follows = c.get("follows_page_likes", pd.Series(dtype=float)).sum()
+    shares = c.get("shares", pd.Series(dtype=float)).sum()
+    visits = l.get("sessions", pd.Series(dtype=float)).sum()
+
+    base = {
+        "spend": spend,
+        "impressions": impressions,
+        "clicks": clicks,
+        "leads": leads,
+        "follows": follows,
+        "shares": shares,
+        "website_visits": visits,
+        "ctr": safe_div(clicks, impressions),
+        "cpc": safe_div(spend, clicks),
+        "cpl": safe_div(spend, leads),
+        "cp_visit": safe_div(spend, visits),
+        "lead_conversion_rate": safe_div(leads, visits),
+    }
+    if platform == "Meta":
+        base.update(
+            {
+                "page_likes_gained": follows,
+                "cost_per_page_like": safe_div(spend, follows),
+                "cost_per_outbound_click": safe_div(spend, clicks),
+            }
+        )
+    if platform == "LinkedIn":
+        base.update(
+            {
+                "followers_gained": follows,
+                "cost_per_follower": safe_div(spend, follows),
+                "engagement_rate": safe_div(shares, impressions),
+            }
+        )
+    if platform == "Google":
+        base.update({"cpm": safe_div(spend * 1000, impressions)})
+    return base
+
+
+def comparison_value(
+    metric_name: str,
+    selected: dict,
+    campaign_all: pd.DataFrame,
+    lp_all: pd.DataFrame,
+    selected_month: str,
+    comparison_mode: str,
+    platform: str | None = None,
+) -> tuple[float | None, float | None]:
+    selected_value = selected.get(metric_name)
+    if comparison_mode == "Previous Month":
+        comp_month = str(pd.Period(selected_month, "M") - 1)
+        if platform:
+            baseline = aggregate_platform(month_slice(campaign_all, comp_month), month_slice(lp_all, comp_month), platform)
+        else:
+            baseline = aggregate_exec(month_slice(campaign_all, comp_month), month_slice(lp_all, comp_month))
+        baseline_value = baseline.get(metric_name)
+    else:
+        months = trailing_months(selected_month, 3)
+        values = []
+        for m in months:
+            if platform:
+                cur = aggregate_platform(month_slice(campaign_all, m), month_slice(lp_all, m), platform)
+            else:
+                cur = aggregate_exec(month_slice(campaign_all, m), month_slice(lp_all, m))
+            val = cur.get(metric_name)
+            if val is not None and not (isinstance(val, float) and math.isnan(val)):
+                values.append(val)
+        baseline_value = float(np.mean(values)) if values else None
+    return selected_value, baseline_value
+
+
+def delta_text(current: float | None, baseline: float | None) -> str:
+    if current is None or baseline is None:
+        return "n/a"
+    if baseline == 0:
+        return "n/a"
+    return f"{((current-baseline)/baseline):+.1%}"
